@@ -101,11 +101,11 @@ hyperparameter_defaults = {
     "num_networks": 50,
     "model_type":"HINet",
     "num_seeds": 5,
-    "epochs_range": [10],#[1500,2000,3000],
-    "hidden_range": [16],#[16,32],
-    "alpha_range": [0,0.025],#,0.05,0.1,0.2,0.3],
+    "epochs_range": [1500,2000,3000],
+    "hidden_range": [16,32],
+    "alpha_range": [0,0.025,0.05,0.1,0.2,0.3],
     "gamma_range": [0],
-    "lr_range": [0.001],#[0.001,0.0005,0.0001],
+    "lr_range": [0.001,0.0005,0.0001],
     "track_loss": False,
     "weight_decay":0.001,
     "p_alpha":0.1, #p to select alpha
@@ -135,11 +135,11 @@ sweep_config = {
             "values": [False]
         },
         "model_type": {
-            "values": ["GINModel"]
+            "values": ["HINet"]
         },
 }}
 
-wandb_project_name = "my_name" #put your wandb project name here
+wandb_project_name = "" #put your wandb project name here
 def sweep_function():
     wandb.init(config=hyperparameter_defaults,
                project = wandb_project_name,
