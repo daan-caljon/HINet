@@ -1,7 +1,7 @@
 import os
 import sys
 
-DIR = r"C:\Users\u0165132\OneDrive - KU Leuven\1-PhD\Heterogeneous spillover\Github_code\final_code" #change to your directory
+DIR = r"" #change to your directory
 os.chdir(DIR)
 sys.path.append(DIR)
 import random
