@@ -72,7 +72,7 @@ def treatmentSimulation(config,X,A):
     print("T",np.mean(T),np.std(T))
 
 
-    
+    #uncomment this to plot the network as in figure 1
     
     # #plot nodes with nx and color them according to treatment
     # plt.style.use("science")
@@ -138,10 +138,7 @@ def treatmentSimulation(config,X,A):
     # plt.xlabel('Ratio of treated neighbors')
     # plt.ylabel('Frequency')
     # plt.show()
-    # # print("numT",np.sum(T))
-    # # print(de)
 
-    # # print(de)
     mean_T = np.mean(T)
     print("mean_T",mean_T)
     return T, mean_T
@@ -309,8 +306,6 @@ def generate_data(config,gen_type,nx_seed,watts_strogatz = False):
         else:
             G = nx.barabasi_albert_graph(config["num_nodes"], config["edges_new_node"],seed=config["seed"])
         adj_matrix = nx.adjacency_matrix(G)
-    elif config["dataset"] == "enron":
-        trainA, valA, testA =load_enron_network()
     elif config["dataset"] == "Flickr" or config["dataset"] == "BC" :
         
         data,parts = readData(config["dataset"])
@@ -537,17 +532,17 @@ def simulate_data(config,setting,watts_strogatz = False):
     
 
 def create_homophilous_network(num_nodes,num_features):
-    my_cosine = True
+    my_cosine = True #always use cosine
     X = np.random.randn(num_nodes,num_features)
-    #get euclidian distances between nodes
-    dist_matrix = distance.cdist(X, X, metric='euclidean')  # Shape: (num_nodes, num_nodes)
-    print("dist_matrix",dist_matrix)
-    print("dist_matrix",dist_matrix.mean(),dist_matrix.std())
-    print("max min",dist_matrix.max(),dist_matrix.min())
-    euclidian_distances = dist_matrix
-    similarity_matrix = 1/(1+euclidian_distances)
-    print("similarity_matrix",similarity_matrix)
-    print("similarity_matrix",similarity_matrix.mean(),similarity_matrix.std())
+    # #get euclidian distances between nodes
+    # dist_matrix = distance.cdist(X, X, metric='euclidean')  # Shape: (num_nodes, num_nodes)
+    # print("dist_matrix",dist_matrix)
+    # print("dist_matrix",dist_matrix.mean(),dist_matrix.std())
+    # print("max min",dist_matrix.max(),dist_matrix.min())
+    # euclidian_distances = dist_matrix
+    # similarity_matrix = 1/(1+euclidian_distances)
+    # print("similarity_matrix",similarity_matrix)
+    # print("similarity_matrix",similarity_matrix.mean(),similarity_matrix.std())
 
         
 
@@ -558,15 +553,16 @@ def create_homophilous_network(num_nodes,num_features):
     if my_cosine:
         loc = 0.80
         scale = 0.025
-    else: 
-        loc= 0.3
-        scale =0.025
+    # else: 
+    #     loc= 0.3
+    #     scale =0.025
 
     tolerance = 0.1
-    goal = 4
+    goal = 4 #avg degree
 
     #fill similarity matrix with -1 on diagonal
     np.fill_diagonal(similarity_matrix,-1)
+    #try to find the mean of the dsitribution as to have the right average degree
     for i in range(100):
         #make it a symmetric matrix
         

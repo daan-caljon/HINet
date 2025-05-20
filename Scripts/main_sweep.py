@@ -1,16 +1,15 @@
 import os
 import sys
 
-DIR = r"" #change to your directory
+DIR = r"C:\Users\u0165132\OneDrive - KU Leuven\1-PhD\Heterogeneous spillover\Github_code\final_code" #change to your directory
 os.chdir(DIR)
 sys.path.append(DIR)
 import random
 import numpy as np
 import src.data.data_generator as data_generator
-from src.training import loadData
-from methods.Causal_models import GNNModel,GINModel, NetEst,GINNetEst,my_full_model,my_model_no_net_conf,TARNet,GCN_DECONF,SPNet
+from src.methods.Causal_models import GINModel, NetEst,GINNetEst,HINet,HINet_no_net_conf,TARNet,GCN_DECONF,SPNet
 from src.utils.utils import *
-from training import Trainer
+from src.training import Trainer
 import os
 import yaml
 import torch
@@ -21,14 +20,14 @@ os.environ['TORCH_USE_CUDA_DSA'] = '1'
 
 #Set parameters for the simulation
 num_nodes = 5000 #does nothing when dataset is BC or Flickr
-dataset = "full_sim" #BC, Flickr, full_sim
+dataset = "full_sim" #BC, Flickr, full_sim --> homophily = True or False below
 T = int(0.05*num_nodes) #number of treated nodes
 num_epochs = 1500
 batch_size = -1 #-1
 learning_rate = 0.005
 
 
-random_seed = 2000 #2000
+random_seed = 2000 
 np.random.seed(random_seed)
 random.seed(random_seed)
 torch.manual_seed(random_seed)
@@ -100,25 +99,23 @@ hyperparameter_defaults = {
     "flipRate": flipRate,
     "covariate_dim": covariate_dim,
     "num_networks": 50,
-    "model_type":"GINModel", #my_full_model, NetEst, no_net_conf
+    "model_type":"HINet",
     "num_seeds": 5,
-    "epochs_range": [1500,2000,3000],
-    "hidden_range": [16,32],
-    "alpha_range": [0],
+    "epochs_range": [10],#[1500,2000,3000],
+    "hidden_range": [16],#[16,32],
+    "alpha_range": [0,0.025],#,0.05,0.1,0.2,0.3],
     "gamma_range": [0],
-    "lr_range": [0.001,0.0005,0.0001],
+    "lr_range": [0.001],#[0.001,0.0005,0.0001],
     "track_loss": False,
+    "weight_decay":0.001,
+    "p_alpha":0.1, #p to select alpha
 
 }
-
+#these parameter overwrite the ones defined above
 sweep_config = {
     "name": "sweep",
     "method": "grid",
     "parameters": {
-
-        "bias_NT2Y": {
-            "values": [0]
-        },
         "betaNeighborTreatment2Outcome": {
             "values": [2]
         },
@@ -138,14 +135,11 @@ sweep_config = {
             "values": [False]
         },
         "model_type": {
-            "values": ["my_full_model"]
+            "values": ["GINModel"]
         },
-        "alpha_range": {
-            "values": [[0]]
-        }
 }}
 
-wandb_project_name = "" #put your wandb project name here
+wandb_project_name = "my_name" #put your wandb project name here
 def sweep_function():
     wandb.init(config=hyperparameter_defaults,
                project = wandb_project_name,
@@ -171,14 +165,14 @@ def sweep_function():
     print(torch.std(train_data.y))
     # print(ze)
     print("loading done")
-    if config["model_type"] == "my_full_model":
-        model = my_full_model(Xshape=config["covariate_dim"],hidden=config["hidden"])
+    if config["model_type"] == "HINet":
+        model = HINet(Xshape=config["covariate_dim"],hidden=config["hidden"])
     elif config["model_type"] == "NetEst":
         model = NetEst(Xshape=config["covariate_dim"],hidden=config["hidden"])
     elif config["model_type"] == "GINNetEst":
         model = GINNetEst(Xshape=config["covariate_dim"],hidden=config["hidden"])
-    elif config["model_type"] == "no_net_conf":
-        model= my_model_no_net_conf(Xshape=config["covariate_dim"],hidden=config["hidden"])
+    elif config["model_type"] == "HINet_no_net_conf":
+        model= HINet_no_net_conf(Xshape=config["covariate_dim"],hidden=config["hidden"])
     elif config["model_type"] == "GINModel":
         model = GINModel(Xshape=config["covariate_dim"],hidden=config["hidden"])
     elif config["model_type"] == "TARNet":
@@ -190,14 +184,6 @@ def sweep_function():
     trainer = Trainer(config=config,model=model,train_data=train_data,val_data=val_data,test_data=test_data,device=True)
 
     trainer.train_test_best_model(epochs_range=config["epochs_range"],hidden_range=config["hidden_range"],alpha_range=config["alpha_range"],lr_range=config["lr_range"],num_seeds=config["num_seeds"])
-    # train_seed = config["seed"] + config["run"]
-    # torch.manual_seed(train_seed)
-    # np.random.seed(train_seed)
-    # random.seed(train_seed)
-
-    # print("start training")
-    # val_y_loss, val_t_loss, val_t_neighbor_loss, cf_val_y_loss, cf_val_t_loss, cf_val_t_neighbor_loss = train_my_full_model(train_data,val_data,model,config)
-
 
 sweep_id = wandb.sweep(sweep_config, project = wandb_project_name)
 wandb.agent(sweep_id, function = sweep_function)

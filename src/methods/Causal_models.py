@@ -105,10 +105,10 @@ class HINet(nn.Module):
         self.encoder = Encoder(Xshape,hidden)
         self.gin_predict = GINLayer(hidden, hidden)
         self.grl = GradientReversalLayer(lambda_=1)
-        # self.gin_predict = GINLayer(Xshape, hidden)
+
         self.discriminator = Discriminator(hidden+hidden,hidden,hidden,1)
         self.gin_y = GINLayer(hidden+1, hidden)
-        # self.gin_y = GINLayer(Xshape+1, hidden)
+
         self.pred_y = Predictor(hidden+hidden+1,hidden,hidden,1)
 
 
@@ -122,11 +122,9 @@ class HINet(nn.Module):
         t_pred = self.discriminator(t_pred_embed)
 
 
-        # Reshape the result to [t.shape[0], t.shape[0]]        
-        # Continue with the rest of your forward pass
         embed_y = self.gin_y(torch.cat([embed, t.unsqueeze(1)], dim=1), edge_index)
 
-        # embed_y = F.relu(embed_y)
+
         embed_y = torch.cat([embed_y,embed,t.unsqueeze(1)], dim=1)
         y = self.pred_y(embed_y)
 

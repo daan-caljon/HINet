@@ -1,6 +1,6 @@
 figures/*
 data/*
-models/*
+wandb/*
 Results/*
 __pycache__/
 *.py[cod]

@@ -1,6 +1,10 @@
 import torch
 import torch.nn.functional as F
 import numpy as np
+import pickle as pkl
+from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_adj
+import utils.utils as utils
 
 def Normalize_outcome(y,mean_y,std_y):
     y = (y-mean_y)/std_y
@@ -10,6 +14,48 @@ def Normalize_outcome_recover(y,mean_y,std_y):
     y = y*std_y + mean_y
     return y
 
+def loadData(setting):
+    cuda= True
+    file = "data/simulated/" + setting +".pkl"
+    with open(file,"rb") as f:
+            data = pkl.load(f)
+    #Only use test data
+    dataTrain,dataVal,dataTest = data["train"],data["val"],data["test"]
+    #get dataTest from 
+    trainA, trainX, trainT,cfTrainT,POTrain,cfPOTrain,ITTETrain,X_randomTrain,PO_randomTrain = utils.dataTransform(dataTrain,cuda)
+    valA, valX, valT,cfValT,POVal,cfPOVal,ITTEVal,X_randomVal,PO_randomVal = utils.dataTransform(dataVal,cuda)
+    testA, testX, testT,cfTestT,POTest,cfPOTest,ITTETest,X_randomTest,PO_randomTest = utils.dataTransform(dataTest,cuda)
+    #calculate z for all of them (proportion of treated neighbors)
+    neighbors = torch.sum(trainA, 1)
+    trainZ = torch.div(torch.matmul(trainA, trainT.reshape(-1)), neighbors)
+
+    neighbors = torch.sum(valA, 1)
+    valZ = torch.div(torch.matmul(valA, valT.reshape(-1)), neighbors)
+
+    neighbors = torch.sum(testA, 1)
+    testZ = torch.div(torch.matmul(testA, testT.reshape(-1)), neighbors)
+
+    #now transform to torch geometric data
+    train_edge_index = trainA.nonzero().t().contiguous()
+    train_data = Data(x=trainX,edge_index=train_edge_index,y=POTrain,t=trainT,cf_t=cfTrainT,cf_y=cfPOTrain,z=trainZ,ITTE=ITTETrain,
+                      X_random = X_randomTrain,PO_random = PO_randomTrain)
+
+    print("Train data: ",train_data)
+    print("Train data edges: ",train_data.edge_index)
+    #now for val and test
+    val_edge_index = valA.nonzero().t().contiguous()
+    val_data = Data(x=valX,edge_index=val_edge_index,y=POVal,t=valT,cf_t=cfValT,cf_y=cfPOVal,z=valZ,ITTE=ITTEVal,
+                    X_random = X_randomVal,PO_random = PO_randomVal)
+    print("Val data: ",val_data)
+    print("Val data edges: ",val_data.edge_index)
+
+    test_edge_index = testA.nonzero().t().contiguous()
+    test_data = Data(x=testX,edge_index=test_edge_index,y=POTest,t=testT,cf_t=cfTestT,cf_y=cfPOTest,z=testZ,ITTE=ITTETest,
+                     X_random = X_randomTest,PO_random = PO_randomTest)
+    print("Test data: ",test_data)
+    print("Test data edges: ",test_data.edge_index)
+
+    return train_data,val_data,test_data
 """
 The following codes are originally by Ruocheng Guo for the WSDM'20 paper
 @inproceedings{guo2020learning,
