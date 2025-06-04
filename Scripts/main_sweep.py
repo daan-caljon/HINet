@@ -1,20 +1,31 @@
 import os
 import sys
 
-DIR = r"" #change to your directory
+DIR = os.path.dirname(os.path.abspath(__file__))
+DIR = os.path.dirname(DIR)
 os.chdir(DIR)
 sys.path.append(DIR)
-import random
 import numpy as np
-import src.data.data_generator as data_generator
-from src.methods.Causal_models import GINModel, NetEst,GINNetEst,HINet,HINet_no_net_conf,TARNet,GCN_DECONF,SPNet
-from src.utils.utils import *
-from src.training import Trainer
-import os
-import yaml
 import torch
 import torch_geometric
+import yaml
+import random
+
+import src.data.data_generator as data_generator
 import wandb
+from src.methods.Causal_models import (
+    GCN_DECONF,
+    GINModel,
+    GINNetEst,
+    HINet,
+    HINet_no_net_conf,
+    NetEst,
+    SPNet,
+    TARNet,
+)
+from src.training import Trainer
+from src.utils.utils import *
+
 os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 os.environ['TORCH_USE_CUDA_DSA'] = '1'
 
