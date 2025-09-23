@@ -8,8 +8,7 @@ HINet/
   |_ semi_synthetic/                   
     |_ BC/
     |_ Flickr/
-|_ scripts/
-  |_ create_figures.py                    
+|_ scripts/                  
   |_ main_sweep.py            # Script to run a wandb sweep                   
 |_ src/
   |_ data/
@@ -31,8 +30,8 @@ All code was written for ```python 3.12.3```.
 
 ## Usage
 Download the data for the BC and Flickr datasets from [Google Drive](https://drive.google.com/drive/folders/1CGOKpd7NU-brk9PpiO6nJcVYp3idi97E?usp=sharing). The original Flickr and BC data comes from [this repo](https://github.com/rguo12/network-deconfounder-wsdm20). We use the same data as [Jiang & Sun (2022)](https://github.com/songjiang0909/Causal-Inference-on-Networked-Data).
-Put the data in the ```data/semi_synthetic/``` folder. For the homophilous and BA dataset, set the parameter ```homophily``` to ```True``` or ```False```, respectively. 
-Now, the results from the paper can be reproduced by setting the ```DIR``` variable to your directory and selecting the right parameters in the ```wandb``` sweep configuration.
+Put the data in the ```data/semi_synthetic/``` folder. For the Homophily and BA dataset, set the parameter ```homophily``` to ```True``` or ```False```, respectively.
+Now, the results from the paper can be reproduced by selecting the right parameters in the ```wandb``` sweep configuration.
 
 ## Acknowledgements
 Our code builds upon the code from [Jiang & Sun (2022)](https://github.com/songjiang0909/Causal-Inference-on-Networked-Data). 

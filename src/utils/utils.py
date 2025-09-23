@@ -39,7 +39,7 @@ def loadData(setting):
     train_edge_index = trainA.nonzero().t().contiguous()
     train_data = Data(x=trainX,edge_index=train_edge_index,y=POTrain,t=trainT,cf_t=cfTrainT,cf_y=cfPOTrain,z=trainZ,ITTE=ITTETrain,
                       X_random = X_randomTrain,PO_random = PO_randomTrain)
-
+    print("z train",torch.mean(train_data.z),torch.std(train_data.z))
     print("Train data: ",train_data)
     print("Train data edges: ",train_data.edge_index)
     #now for val and test

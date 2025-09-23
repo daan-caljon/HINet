@@ -4,6 +4,7 @@ import pickle as pkl
 import networkx as nx
 import numpy as np
 import torch
+import matplotlib.pyplot as plt
 from sklearn.metrics.pairwise import cosine_similarity
 
 from src.data.datatools import *
@@ -36,7 +37,6 @@ def treatmentSimulation(config, X, A):
         X_log = np.log(X + 1)
     if do_sigmoid:
         X_sigmoid = sigmoid(X)
-    # for now we do linear
     X_extended = np.concatenate((X[:, :5], X[:, -5:]), axis=1)
     # X_extended = np.concatenate((X,X_sigmoid),axis=1)
     covariate2TreatmentMechanism = np.matmul(config["w_c"], X_extended.T)
@@ -47,10 +47,6 @@ def treatmentSimulation(config, X, A):
         np.matmul(A, covariate2NeighborTreatmentMechanism.reshape(-1)), neighbors
     )
     neighborSum = neighborAverage
-    # print("neighborSum",np.mean(neighborSum),np.std(neighborSum))
-    # print ("confounding",np.mean(config["betaConfounding"]*covariate2TreatmentMechanism+betaNeighborConfounding*neighborSum),np.std(config["betaConfounding"]*covariate2TreatmentMechanism+betaNeighborConfounding*neighborSum))
-    # propensityTwithout = config["betaConfounding"]*covariate2TreatmentMechanism+betaNeighborConfounding*neighborSum
-    # propensityT = sigmoid(propensityTwithout - np.mean(propensityTwithout))
     propensityT = sigmoid(
         config["betaConfounding"] * covariate2TreatmentMechanism
         + config["betaNeighborConfounding"] * neighborSum
@@ -63,17 +59,7 @@ def treatmentSimulation(config, X, A):
     percentile = np.percentile(propensityT, 100 * (1 - config["percent_treated"]))
     propensityT = propensityT - percentile
     propensityT = sigmoid(propensityT)
-    # find 25% of the nodes with the highest propensity score
-    # if config["percent_treated"] != 0.5:
 
-    #     value = np.percentile(propensityT, 100*(1 -config["percent_treated"]))
-    #     print("value",value)
-    #     random_values = (np.random.rand(len(propensityT))-0.5)/4
-    #     random_values= np.clip(random_values+value,0,1)
-
-    # else:
-    #     random_values= np.random.rand(len(propensityT))
-    # random_values = np.random.rand(len(propensityT))
     random_values = np.random.rand(len(propensityT))
     T = (random_values < propensityT).astype(int)
     # print("propsensityT np",np.array(propensityT)[100:120])
@@ -168,8 +154,6 @@ def masked_softmax(x):
 
 def exposure_mapping(X, A, T, exposure_type="average", w_exposure=None, biasNT2Y=3):
     neighbors = np.sum(A, 1)  # number of neighbors
-    # Four options
-    # 1 sum of treated neighbors
     if exposure_type == "sum":
         exposure = np.matmul(A, T.reshape(-1))
 
@@ -177,6 +161,7 @@ def exposure_mapping(X, A, T, exposure_type="average", w_exposure=None, biasNT2Y
     elif exposure_type == "average":
         sum_exposure = np.matmul(A, T.reshape(-1))
         exposure = np.divide(sum_exposure, neighbors)
+        # print("exposure", exposure.mean(), exposure.std())
     # 3 weight through exposure mechanism
     elif exposure_type == "weight":
         exposure_mech = np.matmul(w_exposure, X.T) + biasNT2Y
@@ -185,18 +170,67 @@ def exposure_mapping(X, A, T, exposure_type="average", w_exposure=None, biasNT2Y
         exposure = np.matmul(A_masked, exposure_mech)
 
         exposure = np.divide(exposure, neighbors)
+    elif exposure_type == "weight_squared":
+        exposure_mech = np.matmul(w_exposure, X.T) + biasNT2Y
+        exposure_mech = np.square(exposure_mech)
+        # mask A according to T
+        A_masked = A * T.reshape(-1)
+        exposure = np.matmul(A_masked, exposure_mech)
 
-    elif exposure_type == "similarity":
-        # cosine similarity between the features of the nodes
-        X_norm = X / np.linalg.norm(X, axis=1, keepdims=True)
-        cosine_sim = np.dot(X_norm, X_norm.T)
+        exposure = np.divide(exposure, neighbors)
+    elif exposure_type == "weight_sigmoid":
+        exposure_mech = np.matmul(w_exposure, X.T) + biasNT2Y
+        # mask A according to T
+        A_masked = A * T.reshape(-1)
+        exposure = np.matmul(A_masked, exposure_mech)
 
-        neighbor_sim = A * cosine_sim  # Ensures that only adjacent nodes are considered
+        exposure = np.exp(exposure)  # apply softmax
+        exposure = exposure / np.sum(exposure, axis=0,keepdims=True)  # normalize
+        # print("exposure shape", exposure.shape)
+    
+    elif exposure_type == "full_correlated":
+        #exposure mechanism where depending on individual treatment, 
+        # neighbor treatments have different effect
+        exposure_mech_1 = np.matmul(w_exposure, X.T) + biasNT2Y
+        #w_exposure is a list
 
-        softmax_sim = masked_softmax(neighbor_sim)
+        w_exposure_0 = -np.array(w_exposure) * 0.5  # half the weight for T=0
+        #back to list
+        w_exposure_0 = w_exposure_0.tolist()
 
-        exposure = np.matmul(softmax_sim, T.reshape(-1))
+        exposure_mech_0 = np.matmul(w_exposure_0, X.T)
+        # mask A according to T
+        A_masked = A * T.reshape(-1)
+        exposure = np.where(
+            T.reshape(-1) == 1,
+            np.matmul(A_masked, exposure_mech_1),
+            np.matmul(A_masked, exposure_mech_0),
+        )
+        # print("exposure shape",exposure.shape)
+        exposure = np.divide(exposure, neighbors)
+        # print("exposure", exposure.mean(), exposure.std())
+    elif exposure_type == "entropy":
 
+        treated_neighbors = np.matmul(A, T.reshape(-1))
+        prob_treated = treated_neighbors / neighbors
+        entropy = -(prob_treated * np.log2(prob_treated + 1e-10) +
+                   (1 - prob_treated) * np.log(1 - prob_treated + 1e-10))
+        exposure = entropy
+        # print("exposure", exposure.mean(), exposure.std())
+        #now - 0.5 to center the entropy around 0
+        exposure = exposure - 0.5
+        # print("exposure after centering", exposure.mean(), exposure.std())
+
+        #calculate the entropy
+    #plot exposure distribution
+    # plt.hist(exposure,bins=100)
+    # plt.title('Distribution of exposure')
+    # plt.xlabel('Exposure')
+    # plt.ylabel('Frequency')
+    # #Save
+    # plt.savefig('exposure_distribution.png')
+    # plt.close()
+    # stop
     return exposure
 
 
@@ -245,7 +279,6 @@ def potentialOutcomeSimulation(config, X, A, T, epsilon=0):
     w_beta_T2Y = np.array(config["w_beta_T2Y"])
     T = np.array(T, dtype=np.float32)
     if do_squared:
-        # select 2 variables and square them (replace in X)
         X_squared = np.square(X)
     if do_log:
         X_log = np.log(X + 1)
@@ -308,8 +341,6 @@ def potentialOutcomeSimulation(config, X, A, T, epsilon=0):
         + config["betaCovariate2Outcome"] * covariate2OutcomeMechanism
         + config["betaNeighborCovariate2Outcome"] * neighborAverage
     )
-    # print("potentialOutcoem",potentialOutcome[0:20])
-    # print("potentialOutcome",potentialOutcome.mean(),potentialOutcome.std())
 
     return potentialOutcome
 
@@ -588,16 +619,6 @@ def simulate_data(config, setting, watts_strogatz=False):
 def create_homophilous_network(num_nodes, num_features):
     my_cosine = True  # always use cosine
     X = np.random.randn(num_nodes, num_features)
-    # #get euclidian distances between nodes
-    # dist_matrix = distance.cdist(X, X, metric='euclidean')  # Shape: (num_nodes, num_nodes)
-    # print("dist_matrix",dist_matrix)
-    # print("dist_matrix",dist_matrix.mean(),dist_matrix.std())
-    # print("max min",dist_matrix.max(),dist_matrix.min())
-    # euclidian_distances = dist_matrix
-    # similarity_matrix = 1/(1+euclidian_distances)
-    # print("similarity_matrix",similarity_matrix)
-    # print("similarity_matrix",similarity_matrix.mean(),similarity_matrix.std())
-
     if my_cosine:
         similarity_matrix = cosine_similarity(X)
     np.fill_diagonal(similarity_matrix, -1)
@@ -608,8 +629,8 @@ def create_homophilous_network(num_nodes, num_features):
     #     loc= 0.3
     #     scale =0.025
 
-    tolerance = 0.1
-    goal = 4  # avg degree
+    tolerance = 0.1 #how close to degree goal
+    goal = 4  # avg degree of BA network
 
     # fill similarity matrix with -1 on diagonal
     np.fill_diagonal(similarity_matrix, -1)

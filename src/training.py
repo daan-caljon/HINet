@@ -2,7 +2,7 @@ import numpy as np
 
 # from re import S
 import torch
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import NeighborLoader,DataLoader
 
 import src.utils.utils as utils
 import wandb
@@ -15,6 +15,7 @@ from src.methods.Causal_models import (
     NetEst,
     SPNet,
     TARNet,
+    TargetedModel_DoubleBSpline
 )
 from src.utils.metrics import CNEE, PEHNE
 from src.utils.utils import Normalize_outcome, Normalize_outcome_recover
@@ -30,6 +31,9 @@ class Trainer:
         self.device = device
         self.model = model
         self.model_type = config["model_type"]
+        #we keep the batch size the same and us the same data loader!
+        self.fluctuation_train_steps = config["fluctuation_train_epochs"]
+     
 
     def train_test_best_model(
         self, epochs_range, lr_range, alpha_range, hidden_range, num_seeds
@@ -44,20 +48,22 @@ class Trainer:
         else:
             alpha_tuning = False
             best_alpha = 0
+            if self.config["model_type"] == "TargetedModel_DoubleBSpline":
+                best_alpha = self.config["alpha"]
+                print("Using fixed alpha for TargetedModel_DoubleBSpline:", best_alpha)
 
         if not alpha_tuning:
-            best_val_loss, best_epoch, best_lr, best_alpha, best_hidden = (
+            best_val_loss, best_epoch, best_lr, best_alpha, best_hidden, best_dropout = (
                 self.hyperparameter_tuning(
-                    epochs_range, lr_range, alpha_range, hidden_range
+                    epochs_range, lr_range, [best_alpha], hidden_range, dropout_range=self.config["dropout_range"]
                 )
             )
         else:
-            best_val_loss, best_epoch, best_lr, best_alpha, best_hidden = (
-                self.hyperparameter_tuning(epochs_range, lr_range, [0], hidden_range)
+            best_val_loss, best_epoch, best_lr, best_alpha, best_hidden, best_dropout = (
+                self.hyperparameter_tuning(epochs_range, lr_range, [0], hidden_range, dropout_range=self.config["dropout_range"])
             )
-            # find elbow
             best_alpha = self.select_alpha(
-                best_epoch, best_lr, best_hidden, alpha_range
+                best_epoch, best_lr, best_hidden,best_dropout, alpha_range
             )
 
         wandb.log(
@@ -67,12 +73,14 @@ class Trainer:
                 "best_lr": best_lr,
                 "best_alpha": best_alpha,
                 "best_hidden": best_hidden,
+                "best_dropout": best_dropout,
             }
         )
         self.config["num_epochs"] = best_epoch
         self.config["learning_rate"] = best_lr
         self.config["alpha"] = best_alpha
         self.config["hidden"] = best_hidden
+        self.config["dropout"] = best_dropout
         sum_test_y_loss = 0
         sum_pehne = 0
         sum_test_cf_y_loss = 0
@@ -91,35 +99,39 @@ class Trainer:
             np.random.seed(train_seed)
             if self.model_type == "HINet":
                 self.model = HINet(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "NetEst":
                 self.model = NetEst(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "HINet_no_net_conf":
                 self.model = HINet_no_net_conf(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "GINModel":
                 self.model = GINModel(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "GINNetEst":
                 self.model = GINNetEst(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "TARNet":
                 self.model = TARNet(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "GCN_DECONF":
                 self.model = GCN_DECONF(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
                 )
             elif self.model_type == "SPNet":
                 self.model = SPNet(
-                    Xshape=self.config["covariate_dim"], hidden=best_hidden
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, dropout=best_dropout
+                )
+            elif self.model_type == "TargetedModel_DoubleBSpline":
+                self.model = TargetedModel_DoubleBSpline(
+                    Xshape=self.config["covariate_dim"], hidden=best_hidden, tr_knots=self.config["tr_knots"], dropout=best_dropout
                 )
             test_y_loss, test_pehne, test_cf_y_loss, ITTE_loss, cnee = self.train_model(
                 self.train_data, self.test_data, test=True
@@ -166,40 +178,45 @@ class Trainer:
         )
         return avg_test_y_loss, avg_pehne, avg_test_cf_y_loss, avg_ITTE_loss, avg_cnee
 
-    def select_alpha(self, epochs, lr, hidden, alpha_range):
+    def select_alpha(self, epochs, lr, hidden, dropout,alpha_range):
         p = self.config["p_alpha"]
         loss_dict = {}
         self.config["num_epochs"] = epochs
         self.config["learning_rate"] = lr
         self.config["hidden"] = hidden
+        self.config["dropout"] = dropout
         for alpha in alpha_range:
             torch.manual_seed(self.config["seed"])
             np.random.seed(self.config["seed"])
             self.config["alpha"] = alpha
             if self.model_type == "HINet":
-                self.model = HINet(Xshape=self.config["covariate_dim"], hidden=hidden)
+                self.model = HINet(Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"])
             elif self.model_type == "NetEst":
-                self.model = NetEst(Xshape=self.config["covariate_dim"], hidden=hidden)
-            elif self.model_type == "no_net_conf":
+                self.model = NetEst(Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"])
+            elif self.model_type == "HINet_no_net_conf":
                 self.model = HINet_no_net_conf(
-                    Xshape=self.config["covariate_dim"], hidden=hidden
+                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"]
                 )
             elif self.model_type == "GINModel":
                 self.model = GINModel(
-                    Xshape=self.config["covariate_dim"], hidden=hidden
+                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"]
                 )
             elif self.model_type == "GINNetEst":
                 self.model = GINNetEst(
-                    Xshape=self.config["covariate_dim"], hidden=hidden
+                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"]
                 )
             elif self.model_type == "TARNet":
-                self.model = TARNet(Xshape=self.config["covariate_dim"], hidden=hidden)
+                self.model = TARNet(Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"])
             elif self.model_type == "GCN_DECONF":
                 self.model = GCN_DECONF(
-                    Xshape=self.config["covariate_dim"], hidden=hidden
+                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"]
                 )
             elif self.model_type == "SPNet":
-                self.model = SPNet(Xshape=self.config["covariate_dim"], hidden=hidden)
+                self.model = SPNet(Xshape=self.config["covariate_dim"], hidden=hidden, dropout=self.config["dropout"])
+            elif self.model_type == "TargetedModel_DoubleBSpline":
+                self.model = TargetedModel_DoubleBSpline(
+                    Xshape=self.config["covariate_dim"], hidden=hidden, tr_knots=self.config["tr_knots"], dropout=self.config["dropout"]
+                )
 
             val_y_loss = self.train_model(self.train_data, self.val_data, test=False)[0]
             print("alpha", alpha)
@@ -224,14 +241,15 @@ class Trainer:
     def train_model(self, train_data, val_data, test=False):
         # https://medium.com/stanford-cs224w/a-tour-of-pygs-data-loaders-9f2384e48f8f
 
-        # normalize y values
-        alpha = self.config["alpha"]
-        gamma = self.config["gamma"]
+        self.alpha = self.config["alpha"]
+        self.gamma = self.config["gamma"]
+
         if self.model_type == "HINet" or self.model_type == "HINet_no_net_conf":
-            gamma = 0
+            self.gamma = 0
         learning_rate = self.config["learning_rate"]
         epochs = self.config["num_epochs"]
         batch_size = self.config["batch_size"]
+
 
         if batch_size == -1:
             batch_size = train_data.x.shape[0]
@@ -247,9 +265,13 @@ class Trainer:
         mean_y_train = train_data.y.mean()
         std_y_train = train_data.y.std()
         train_data.y = Normalize_outcome(train_data.y, mean_y_train, std_y_train)
+        self.normalized_train_y = train_data.y
         val_data.y = Normalize_outcome(val_data.y, mean_y_train, std_y_train)
+        self.normalized_val_y = val_data.y
         train_data.cf_y = Normalize_outcome(train_data.cf_y, mean_y_train, std_y_train)
+        self.normalized_train_cf_y = train_data.cf_y
         val_data.cf_y = Normalize_outcome(val_data.cf_y, mean_y_train, std_y_train)
+        self.normalized_val_cf_y = val_data.cf_y
         # if this does not work because pyg-lib is not installed, try the following loader instead:
         # loader = DataLoader(train_data,batch_size=batch_size,shuffle=True)
 
@@ -283,6 +305,9 @@ class Trainer:
                 lr=learning_rate,
                 weight_decay=self.config["weight_decay"],
             )
+        elif self.model_type == "TargetedModel_DoubleBSpline":
+            self.optimizerT = torch.optim.Adam(self.model.parameter_base(), lr=learning_rate, weight_decay=self.config["weight_decay"])
+            self.optimizer_fluc = torch.optim.Adam(self.model.parameters(), lr=self.config["lr_2_step"], weight_decay=self.config["weight_decay"])
         else:
             optimizer = torch.optim.Adam(
                 self.model.parameters(),
@@ -290,17 +315,21 @@ class Trainer:
                 weight_decay=self.config["weight_decay"],
             )
         criterion = torch.nn.MSELoss()
+        self.criterion = criterion
         BCE_loss = torch.nn.BCELoss()
+        self.BCE_loss = BCE_loss
         val_data.to("cuda")
         train_data.to("cuda")
         # Training loop
         self.model.train()
         print("Training started")
-        print("alpha", alpha)
-        print("gamma", gamma)
+        print("alpha", self.alpha)
+        print("gamma", self.gamma)
         print("epochs", epochs)
         print("hidden", self.config["hidden"])
         print("learning_rate", self.config["learning_rate"])
+        print("dropout", self.config["dropout"])
+        self.epoch_count = 0
         for epoch in range(epochs):
             total_loss = 0
             batch_num = 0
@@ -313,8 +342,12 @@ class Trainer:
                     optimizer_t.zero_grad()
                     optimizer_z.zero_grad()
                     optimizer_p.zero_grad()
+                elif self.model_type == "TargetedModel_DoubleBSpline":
+                    self.optimizerT.zero_grad()
+                    self.optimizer_fluc.zero_grad()
                 else:
                     optimizer.zero_grad()
+
 
                 if self.model_type == "NetEst" or self.model_type == "GINNetEst":
                     t_pred, y_pred, z_pred = self.model(
@@ -324,17 +357,44 @@ class Trainer:
                     t_pred, y_pred, representations = self.model(
                         batch.x, batch.t, batch.z, batch.edge_index
                     )
+                elif self.model_type == "TargetedModel_DoubleBSpline":
+                    g_T_hat, g_Z_hat, Q_hat, epsilon, embeddings, neighborAverageT = self.model(
+                        batch.x, batch.t, batch.z, batch.edge_index
+                    )
+                    print("bathc.z",batch.z)
+                    print("batch.z mean",batch.z.mean(),"batch.z std",batch.z.std())
+                    # print("shape Q_hat", Q_hat.reshape(-1).shape, "shape g_T_hat", g_T_hat.reshape(-1).shape, "shape g_Z_hat", g_Z_hat.shape, "shape epsilon", epsilon.shape)
+                    # print("batch.y shape", batch.y.shape, "batch.t shape", batch.t.shape, "batch.z shape", batch.z.shape)
+                    Q_Loss = self.criterion(Q_hat.reshape(-1), batch.y)
+                    g_T_Loss = self.BCE_loss(g_T_hat.reshape(-1), batch.t)
+                    g_Z_Loss = - torch.log(g_Z_hat + 1e-6).mean()
+                    Loss_base = Q_Loss + self.alpha * g_T_Loss + self.gamma * g_Z_Loss
+                    target = Q_hat.reshape(-1) + epsilon.reshape(-1) * (1 / (g_T_hat.detach().reshape(-1) * g_Z_hat.detach().reshape(-1) + 1e-6) )
+                    # print("TR",target.shape)
+                    Loss_TR = self.criterion(
+                        target,batch.y)
+
+                    loss_train = Loss_base + self.config["beta"] * Loss_TR
+                    loss_train.backward()
+                    self.optimizerT.step()
+                    batch_y_loss, batch_t_loss, batch_z_loss = Q_Loss, g_T_Loss, g_Z_Loss
+                    # print("batch_y_loss", batch_y_loss.item(), "batch_t_loss", batch_t_loss.item(), "batch_z_loss", batch_z_loss.item())
+                    if self.epoch_count > self.config["pre_train_epochs"]:
+                        self.train_fluctuation_param_one_step(batch.x,batch.t,batch.z,batch.edge_index,batch.y)
+                    self.epoch_count += 1
+                    # print("epoch", epoch, "batch_num", batch_num, "loss_train", loss_train.item())
+
                 else:
                     t_pred, y_pred = self.model(
                         batch.x, batch.t, batch.z, batch.edge_index
                     )
-
-                batch_y_loss = criterion(
-                    y_pred[:batch_size].squeeze(1), batch.y[:batch_size]
-                )
-                batch_t_loss = BCE_loss(
-                    t_pred[:batch_size].squeeze(1), batch.t[:batch_size]
-                )
+                if not (self.model_type == "TargetedModel_DoubleBSpline"):
+                    batch_y_loss = criterion(
+                        y_pred[:batch_size].squeeze(1), batch.y[:batch_size]
+                    )
+                    batch_t_loss = BCE_loss(
+                        t_pred[:batch_size].squeeze(1), batch.t[:batch_size]
+                    )
 
                 batch_y_loss_train = batch_y_loss
                 batch_t_loss_train = batch_t_loss
@@ -365,7 +425,7 @@ class Trainer:
                     )
                     batch_z_loss = BCE_loss(z_pred[:batch_size].squeeze(1), batch.z)
                     total_loss = (
-                        batch_y_loss - alpha * batch_t_loss - gamma * batch_z_loss
+                        batch_y_loss - self.alpha * batch_t_loss - self.gamma * batch_z_loss
                     )
                     optimizer_p.zero_grad()
                     total_loss.backward()
@@ -382,7 +442,7 @@ class Trainer:
                 elif (
                     self.model_type == "HINet" or self.model_type == "HINet_no_net_conf"
                 ):
-                    total_loss = batch_y_loss_train + alpha * batch_t_loss_train
+                    total_loss = batch_y_loss_train + self.alpha * batch_t_loss_train
                     wandb.log(
                         {
                             "batch_y_loss": batch_y_loss.cpu().item(),
@@ -398,7 +458,7 @@ class Trainer:
                         representations[(batch.t < 1).nonzero()],
                     )
                     dLoss, _ = utils.wasserstein(rep_t1, rep_t0)
-                    total_loss = batch_y_loss + alpha * batch_t_loss + gamma * dLoss
+                    total_loss = batch_y_loss + self.alpha * batch_t_loss + self.gamma * dLoss
                     total_loss.backward()
                     optimizer.step()
                     wandb.log(
@@ -408,6 +468,16 @@ class Trainer:
                             "dLoss": dLoss.cpu().item(),
                             "batch_total_loss": total_loss.cpu().item(),
                         }
+                    )
+                elif self.model_type == "TargetedModel_DoubleBSpline":
+                    wandb.log(
+                        {
+                            "batch_y_loss": batch_y_loss.cpu().item(),
+                            "batch_t_loss": batch_t_loss.cpu().item(),
+                            "batch_total_loss": loss_train.cpu().item(),
+                            "batch_z_loss": batch_z_loss.cpu().item(),
+                        }
+
                     )
                 elif (
                     self.model_type == "GINModel"
@@ -453,6 +523,7 @@ class Trainer:
                     val_data.y = Normalize_outcome_recover(
                         val_data.y, mean_y_train, std_y_train
                     )
+
                     val_y_loss = (
                         criterion(y_val_out.squeeze(1), val_data.y).cpu().item()
                     )
@@ -469,6 +540,11 @@ class Trainer:
                         cf_t_val_out, cf_y_val_out, representations_val = self.model(
                             val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
                         )
+                    elif self.model_type == "TargetedModel_DoubleBSpline":
+                        cf_y_val_out= self.model.infer_potential_outcome(
+                            val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
+                        )
+                        cf_t_val_out = self.model(val_data.x, val_data.cf_t, val_data.z, val_data.edge_index)[0]
                     else:
                         cf_t_val_out, cf_y_val_out = self.model(
                             val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
@@ -479,6 +555,7 @@ class Trainer:
                     val_data.cf_y = Normalize_outcome_recover(
                         val_data.cf_y, mean_y_train, std_y_train
                     )
+                    print("cf_y_val_out", cf_y_val_out.shape, "val_data.cf_y", val_data.cf_y.shape)
                     val_cf_y_loss = (
                         criterion(cf_y_val_out, val_data.cf_y.unsqueeze(1)).cpu().item()
                     )
@@ -525,34 +602,31 @@ class Trainer:
                 t_val_out, y_val_out, representations_val = self.model(
                     val_data.x, val_data.t, val_data.z, val_data.edge_index
                 )
+            elif self.model_type == "TargetedModel_DoubleBSpline":
+                y_val_out= self.model.infer_potential_outcome(
+                    val_data.x, val_data.t, val_data.z, val_data.edge_index
+                )
+                t_val_out = self.model(val_data.x, val_data.t, val_data.z, val_data.edge_index)[0]
             else:
                 t_val_out, y_val_out = self.model(
                     val_data.x, val_data.t, val_data.z, val_data.edge_index
                 )
             # renormalize
-            print("shape", y_val_out.shape)
-            print("mean", y_val_out.mean(), "std", y_val_out.std())
-            y_val_out_squeeze = y_val_out.squeeze(1)
+            # print("shape", y_val_out.shape)
+            # print("mean", y_val_out.mean(), "std", y_val_out.std())
+            y_val_out_squeeze = y_val_out.squeeze()
             y_val_out_squeeze = Normalize_outcome_recover(
                 y_val_out_squeeze, mean_y_train, std_y_train
             )
             y_val_out = Normalize_outcome_recover(y_val_out, mean_y_train, std_y_train)
-            print("mean", y_val_out.mean(), "std", y_val_out.std())
+            # print("mean", y_val_out.mean(), "std", y_val_out.std())
             print("shape", y_val_out.shape)
-            print(
-                "squeezed mean",
-                y_val_out_squeeze.mean(),
-                "squeezed std",
-                y_val_out_squeeze.std(),
-            )
-            print("shape", y_val_out_squeeze.shape)
             val_data.y = Normalize_outcome_recover(
                 val_data.y, mean_y_train, std_y_train
             )
-            print("real data", val_data.y)
-            print("shape", val_data.y.shape)
-
-            val_y_loss = criterion(y_val_out.squeeze(1), val_data.y).cpu().item()
+            print("val_pred",y_val_out.shape,val_data.y.shape)
+            val_y_loss = criterion(y_val_out.squeeze(), val_data.y).cpu().item()
+            print("val_t_out",t_val_out.shape,val_data.t.unsqueeze(1).shape)
             val_t_loss = BCE_loss(t_val_out, val_data.t.unsqueeze(1)).cpu().item()
             # neighbor loss
 
@@ -565,6 +639,11 @@ class Trainer:
                 cf_t_val_out, cf_y_val_out, representations_val = self.model(
                     val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
                 )
+            elif self.model_type == "TargetedModel_DoubleBSpline":
+                cf_y_val_out= self.model.infer_potential_outcome(
+                    val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
+                )
+                cf_t_val_out = self.model(val_data.x, val_data.cf_t, val_data.z, val_data.edge_index)[0]
             else:
                 cf_t_val_out, cf_y_val_out = self.model(
                     val_data.x, val_data.cf_t, val_data.z, val_data.edge_index
@@ -598,6 +677,15 @@ class Trainer:
                 train_cf_t_out, train_cf_y_out, representations_train = self.model(
                     train_data.x, train_data.cf_t, train_data.z, train_data.edge_index
                 )
+            elif self.model_type == "TargetedModel_DoubleBSpline":
+                train_y_out= self.model.infer_potential_outcome(
+                    train_data.x, train_data.t, train_data.z, train_data.edge_index
+                )
+                train_t_out = self.model(train_data.x, train_data.t, train_data.z, train_data.edge_index)[0]
+                train_cf_y_out= self.model.infer_potential_outcome(
+                    train_data.x, train_data.cf_t, train_data.z, train_data.edge_index
+                )
+                train_cf_t_out = self.model(train_data.x, train_data.cf_t, train_data.z, train_data.edge_index)[0]
             else:
                 train_t_out, train_y_out = self.model(
                     train_data.x, train_data.t, train_data.z, train_data.edge_index
@@ -617,7 +705,7 @@ class Trainer:
             train_data.cf_y = Normalize_outcome_recover(
                 train_data.cf_y, mean_y_train, std_y_train
             )
-            train_y_loss = criterion(train_y_out.squeeze(1), train_data.y).cpu().item()
+            train_y_loss = criterion(train_y_out.squeeze(), train_data.y).cpu().item()
             train_t_loss = BCE_loss(train_t_out, train_data.t.unsqueeze(1)).cpu().item()
 
             cf_y_train_loss = (
@@ -665,20 +753,37 @@ class Trainer:
             PO_randomVal = val_data.PO_random
 
             # First check whether X has an effect on Y according to the model
-            train_y_out = self.model(
-                train_data.x, train_data.t, train_data.z, train_data.edge_index
-            )[1].squeeze(1)
-            train_y_out = Normalize_outcome_recover(
-                train_y_out, mean_y_train, std_y_train
-            )
-            train_random_y_out = self.model(
-                X_randomTrain, train_data.t, train_data.z, train_data.edge_index
-            )[1].squeeze(1)
-            train_random_y_out = Normalize_outcome_recover(
-                train_random_y_out, mean_y_train, std_y_train
-            )
+            self.model.eval()
+            if self.model_type == "TargetedModel_DoubleBSpline":
+                train_y_out = self.model.infer_potential_outcome(
+                    train_data.x, train_data.t, train_data.z, train_data.edge_index
+                ).squeeze()
+                train_y_out = Normalize_outcome_recover(
+                    train_y_out, mean_y_train, std_y_train
+                )
+                train_random_y_out = self.model.infer_potential_outcome(
+                    X_randomTrain, train_data.t, train_data.z, train_data.edge_index
+                ).squeeze()
+                train_random_y_out = Normalize_outcome_recover(
+                    train_random_y_out, mean_y_train, std_y_train
+                )
+            else:
+                train_y_out = self.model(
+                    train_data.x, train_data.t, train_data.z, train_data.edge_index
+                )[1].squeeze(1)
+                train_y_out = Normalize_outcome_recover(
+                    train_y_out, mean_y_train, std_y_train
+                )
+                train_random_y_out = self.model(
+                    X_randomTrain, train_data.t, train_data.z, train_data.edge_index
+                )[1].squeeze(1)
+                train_random_y_out = Normalize_outcome_recover(
+                    train_random_y_out, mean_y_train, std_y_train
+                )
             # Check difference between the two
+            print("before diff")
             y_diff = criterion(train_y_out, train_random_y_out).cpu().item()
+            print("after diff")
             # isolate the effect for treated and untreated
             train_y_out_treated = train_y_out[train_data.t == 1]
             train_random_y_out_treated = train_random_y_out[train_data.t == 1]
@@ -795,8 +900,8 @@ class Trainer:
                     }
                 )
 
-                print("alpha", alpha)
-                print("gamma", gamma)
+                print("alpha", self.alpha)
+                print("gamma", self.gamma)
 
                 wandb.log(
                     {
@@ -825,88 +930,149 @@ class Trainer:
 
             return val_y_loss, val_t_loss, val_cf_y_loss, val_cf_t_loss
 
-    def hyperparameter_tuning(self, epoch_range, lr_range, alpha_range, hidden_range):
+    def hyperparameter_tuning(self, epoch_range, lr_range, alpha_range, hidden_range, dropout_range):
         # We tune using the outcome loss
-        best_val_loss = 100
+        best_val_loss = np.inf
         best_epoch = 0
         best_lr = 0
         best_alpha = 0
+        best_dropout = 0
         for epoch in epoch_range:
             for lr in lr_range:
                 for alpha in alpha_range:
                     for hidden in hidden_range:
-                        self.config["hidden"] = hidden
-                        self.config["num_epochs"] = epoch
-                        self.config["learning_rate"] = lr
-                        self.config["alpha"] = alpha
-                        if self.model_type == "HINet":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = HINet(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "NetEst":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = NetEst(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "HINet_no_net_conf":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = HINet_no_net_conf(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "GINModel":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = GINModel(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "GINNetEst":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = GINNetEst(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "TARNet":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = TARNet(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        elif self.model_type == "SPNet":
-                            torch.manual_seed(self.config["seed"])
-                            np.random.seed(self.config["seed"])
-                            self.model = SPNet(
-                                Xshape=self.config["covariate_dim"], hidden=hidden
-                            )
-                        val_y_loss = self.train_model(
-                            self.train_data, self.val_data, test=False
-                        )[0]
-                        print(
-                            "configuration",
-                            "epoch",
-                            epoch,
-                            "lr",
-                            lr,
-                            "alpha",
-                            alpha,
-                            "hidden",
-                            hidden,
-                        )
-                        print("val_y_loss", val_y_loss)
-                        print("best_val_loss", best_val_loss)
+                        for dropout in dropout_range:
+                            
+                            self.config["hidden"] = hidden
+                            self.config["num_epochs"] = epoch
+                            self.config["learning_rate"] = lr
+                            self.config["alpha"] = alpha
+                            self.config["dropout"] = dropout
+                            if self.model_type == "HINet":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = HINet(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "NetEst":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = NetEst(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "HINet_no_net_conf":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = HINet_no_net_conf(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "GINModel":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = GINModel(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "GINNetEst":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = GINNetEst(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "TARNet":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = TARNet(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "SPNet":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = SPNet(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
+                            elif self.model_type == "TargetedModel_DoubleBSpline":
+                                torch.manual_seed(self.config["seed"])
+                                np.random.seed(self.config["seed"])
+                                self.model = TargetedModel_DoubleBSpline(
+                                    Xshape=self.config["covariate_dim"], hidden=hidden, dropout=dropout
+                                )
 
-                        if val_y_loss < best_val_loss:
-                            best_val_loss = val_y_loss
-                            best_epoch = epoch
-                            best_lr = lr
-                            best_alpha = alpha
-                            best_hidden = hidden
+                            val_y_loss = self.train_model(
+                                self.train_data, self.val_data, test=False
+                            )[0]
+                            print(
+                                "configuration",
+                                "epoch",
+                                epoch,
+                                "lr",
+                                lr,
+                                "alpha",
+                                alpha,
+                                "hidden",
+                                hidden,
+                                "dropout",
+                                dropout,
+                            )
+                            print("val_y_loss", val_y_loss)
+                            print("best_val_loss", best_val_loss)
+
+                            if val_y_loss < best_val_loss:
+                                best_val_loss = val_y_loss
+                                best_epoch = epoch
+                                best_lr = lr
+                                best_alpha = alpha
+                                best_hidden = hidden
+                                best_dropout = dropout
         print("best_val_loss", best_val_loss)
         print("best_epoch", best_epoch)
         print("best_lr", best_lr)
         print("best_alpha", best_alpha)
         print("best_hidden", best_hidden)
-        return best_val_loss, best_epoch, best_lr, best_alpha, best_hidden
+        print("best_dropout", best_dropout)
+        return best_val_loss, best_epoch, best_lr, best_alpha, best_hidden, best_dropout
+
+
+    def train_fluctuation_param_one_step(self,batch_x,batch_t,batch_z,batch_edge_index,batch_y):
+
+
+        # self.model.zero_grad()
+        self.model.train()
+        self.optimizer_fluc.zero_grad()
+        # A, X, T, Y = self.trainA, self.trainX, self.trainT, self.YFTrain
+
+        g_T_hat, g_Z_hat, Q_hat, epsilon, embeddings, neighborAverageT = self.model(
+                batch_x, batch_t, batch_z, batch_edge_index
+        )
+        Loss_TR = self.criterion(
+            Q_hat.reshape(-1) +
+            epsilon.reshape(-1) * (1 / (g_T_hat.reshape(-1).detach() * g_Z_hat.reshape(-1).detach() + 1e-6))
+            #  - (1 - T) / (  (1 - g_T_hat.reshape(-1)) * g_Z_hat.reshape(-1) + 1e-6))
+            , batch_y)
+        loss_train = self.config["beta"] * Loss_TR
+
+        if self.config["loss_2step_with_ly"] == 1:
+            Q_Loss = self.criterion(Q_hat.reshape(-1), batch_y)
+            loss_train = loss_train + Q_Loss
+
+        if self.config["loss_2step_with_ltz"] == 1:
+            g_T_Loss = self.BCE_loss(g_T_hat.reshape(-1), batch_t)
+            g_Z_Loss = - torch.log(g_Z_hat + 1e-6).mean()
+            loss_train = loss_train + self.alpha * g_T_Loss + self.gamma * g_Z_Loss
+
+        loss_train.backward()
+        self.optimizer_fluc.step()
+        # return discLoss, discLosshalf
+
+        # print("loss_train_fluc", loss_train.item())
+
+
+
+        # individual_effect_train, peer_effect_train, total_effect_train, \
+        #     ate_individual_train, ate_peer_train, ate_total_train \
+        #     = self.compute_effect_pehe(self.trainA, self.trainX, self.train_t1z1, self.train_t1z0,
+        #                                self.train_t0z7, self.train_t0z2, self.train_t0z0)
+
+        # individual_effect_val, peer_effect_val, total_effect_val,\
+        #     ate_individual_val, ate_peer_val, ate_total_val\
+        #     = self.compute_effect_pehe(self.valA, self.valX, self.val_t1z1, self.val_t1z0,
+        #                                self.val_t0z7, self.val_t0z2, self.val_t0z0)

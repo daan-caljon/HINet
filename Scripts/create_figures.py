@@ -5,7 +5,7 @@ import ast
 import os
 import scienceplots
 
-path_prefix ="NeighCov0"
+path_prefix ="NeighCov15"
 
 plt.style.use('science')
 scale = 4
@@ -76,10 +76,10 @@ def build_dataset(df_subset, homophily_str):
         for betaXT in betaXT_vals: 
             if betaXT in grouped_balanced.groups:
                 g_bal = grouped_balanced.get_group(betaXT)
-                balancing_pehne.append(g_bal['avg_metric'].mean())
-                std_balancing_pehne.append(g_bal['st_dev_test_metric'].mean())
-                balancing_cnee.append(g_bal['avg_val_cf_metric'].mean())
-                std_balancing_cnee.append(g_bal['st_dev_val_cf_metric'].mean())
+                balancing_pehne.append(g_bal['avg_pehne'].mean())
+                std_balancing_pehne.append(g_bal['st_dev_test_pehne'].mean())
+                balancing_cnee.append(g_bal['avg_cnee'].mean())
+                std_balancing_cnee.append(g_bal['st_dev_cnee'].mean())
             else:
                 balancing_pehne.append(np.nan)
                 std_balancing_pehne.append(np.nan)
@@ -88,10 +88,10 @@ def build_dataset(df_subset, homophily_str):
 
             if betaXT in grouped_unbalanced.groups:
                 g_no = grouped_unbalanced.get_group(betaXT)
-                no_pehne.append(g_no['avg_metric'].mean())
-                std_no_pehne.append(g_no['st_dev_test_metric'].mean())
-                no_cnee.append(g_no['avg_val_cf_metric'].mean())
-                std_no_cnee.append(g_no['st_dev_val_cf_metric'].mean())
+                no_pehne.append(g_no['avg_pehne'].mean())
+                std_no_pehne.append(g_no['st_dev_test_pehne'].mean())
+                no_cnee.append(g_no['avg_cnee'].mean())
+                std_no_cnee.append(g_no['st_dev_cnee'].mean())
             else:
                 no_pehne.append(np.nan)
                 std_no_pehne.append(np.nan)

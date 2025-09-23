@@ -2,5 +2,10 @@ figures/*
 data/*
 wandb/*
 Results/*
+Scripts/*
+!Scripts/main_sweep.py
 __pycache__/
 *.py[cod]
+*.pdf
+*.bat
+*.png

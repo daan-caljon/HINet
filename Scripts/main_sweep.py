@@ -22,6 +22,7 @@ from src.methods.Causal_models import (
     NetEst,
     SPNet,
     TARNet,
+    TargetedModel_DoubleBSpline,
 )
 from src.training import Trainer
 from src.utils.utils import *
@@ -31,7 +32,7 @@ os.environ['TORCH_USE_CUDA_DSA'] = '1'
 
 #Set parameters for the simulation
 num_nodes = 5000 #does nothing when dataset is BC or Flickr
-dataset = "full_sim" #BC, Flickr, full_sim --> homophily = True or False below
+dataset = "full_sim" #BC, Flickr, full_sim --> homophily = True or False (BA Sim) below
 T = int(0.05*num_nodes) #number of treated nodes
 num_epochs = 1500
 batch_size = -1 #-1
@@ -76,51 +77,61 @@ random_seed= 2000
 alpha = 0.05
 cuda = True
 hyperparameter_defaults = {
-    "dataset": dataset,
+    "dataset": dataset,  #BC, Flickr, full_sim (for full_sim, homophily = True or False below)
     "num_nodes": num_nodes,
     "num_epochs": num_epochs,
     "batch_size": batch_size,
     "learning_rate": learning_rate,
-    "alpha": alpha,
-    "gamma": 0.5,
-    "betaNeighborConfounding": betaNeighborConfounding,
-    "betaNeighborTreatment2Outcome": betaNeighborTreatment2Outcome,
-    "betaConfounding": betaConfounding,
-    "betaTreat2Outcome": betaTreat2Outcome,
+    "alpha": 1, #these are alpha and gamma used by TNet --> if you want to set alpha for HINet, change alpha_range
+    "gamma": 1,
+    "betaNeighborConfounding": betaNeighborConfounding,  #Xn --> T
+    "betaNeighborTreatment2Outcome": betaNeighborTreatment2Outcome, #Tn --> Y
+    "betaConfounding": betaConfounding, #X --> T
+    "betaTreat2Outcome": betaTreat2Outcome, #T --> Y
     "seed": random_seed,
-    "hidden" : 16,
+    "hidden" : 16, #does nothing, use hidden_range below
     "run": 1,
-    "w_c": w_c,
+    "w_c": w_c, #these are randomly generated weights used in the data generation
     "w": w,
     "w_beta_T2Y": w_beta_T2Y,
     "w_c_n": w_c_n,
     "w_n": w_n,
-    "w_exposure": w_exposure,
+    "w_exposure": w_exposure, #only does something for weight and weight_squared
     "betaNoise": betaNoise,
-    "beta0": beta0,
-    "bias_T2Y": bias_T2Y,
-    "bias_NT2Y":bias_NT2Y,
-    "betaCovariate2Outcome": betaCovariate2Outcome,
-    "betaNeighborCovariate2Outcome": betaNeighborCovariate2Outcome,
+    "beta0": beta0, #intercept
+    "bias_T2Y": bias_T2Y, #intercept for T --> Y
+    "bias_NT2Y":bias_NT2Y, #intercept for NT --> Y
+    "betaCovariate2Outcome": betaCovariate2Outcome, #X --> Y
+    "betaNeighborCovariate2Outcome": betaNeighborCovariate2Outcome, #Xn --> Y
     "homophily": False,
     "node2vec": False,
-    "edges_new_node":2,
-    "exposure_type": "weight",
+    "edges_new_node":2, #m hyperparameter for BA network
+    "exposure_type": "weight", #average, sum, weight, weight_squared, entropy
     "percent_treated": 0.25,
     "flipRate": flipRate,
     "covariate_dim": covariate_dim,
-    "num_networks": 50,
-    "model_type":"HINet",
-    "num_seeds": 5,
-    "epochs_range": [1500,2000,3000],
+    "num_networks": 50, #changes m in the CNEE and PEHNE calculation
+    "model_type":"HINet", #HINet, NetEst, TargetedModel_DoubleBSpline, GINModel, TARNet, GCN_DECONF, SPNet
+    "num_seeds": 5, #number of seeds used in the test set evaluation
+    "epochs_range": [500,1000,2000],
     "hidden_range": [16,32],
     "alpha_range": [0,0.025,0.05,0.1,0.2,0.3],
-    "gamma_range": [0],
-    "lr_range": [0.001,0.0005,0.0001],
-    "track_loss": False,
+    "gamma_range": [0], #does not get used
+    "lr_range": [0.001,0.0005,0.0001], 
+    "dropout_range": [0, 0.1, 0.2],
+    "track_loss": False, #training loss is tracked automatically even if False
     "weight_decay":0.001,
-    "p_alpha":0.1, #p to select alpha
-
+    "p_alpha":0.1, #p to select alpha in hyperparameter tuning
+    #TNet parameters --> same parameters used in their paper
+    "beta" : 20*(num_nodes**-0.5), #this gets transformed in the training object
+    "num_grid" :20,
+    "tr_knots" : 0.1,
+    "lr_1_step" : 1e-3, #learning rate for the first step of the TNet
+    "lr_2_step" : 1e-3, #learning rate for the second optimizer of TNet,
+    "pre_train_epochs": 0, #number of epochs to pre-train the model
+    "loss_2step_with_ly": 0, #'loss in 2 step contains loss of y, 0 means no, 1 means yes'
+    "loss_2step_with_ltz":0, #'loss in 2 step contains loss of tz, 0 means no, 1 means yes'
+    "fluctuation_train_epochs" : 50, #number of epochs to train before fluctuation optimization
 }
 #these parameter overwrite the ones defined above
 sweep_config = {
@@ -130,8 +141,8 @@ sweep_config = {
         "betaNeighborTreatment2Outcome": {
             "values": [2]
         },
-        "betaConfounding": {
-            "values": [3]
+        "betaConfounding": {  #change this to play with BetaXT
+            "values": [6]
         },
         "betaTreat2Outcome": {
             "values": [2]
@@ -140,17 +151,26 @@ sweep_config = {
             "values": [1.5]
         },
         "betaNeighborCovariate2Outcome": {
-            "values": [1.5]
+            "values": [1.5]        
         },
         "homophily": {
-            "values": [False]
+            "values": [False] #True
+        },
+        "exposure_type": {
+            "values": ["weight"] #average, sum, weight, weight_squared, entropy
+        },
+        "dataset": {
+            "values": ["BC"] #BC, Flickr, full_sim
+        },
+        "alpha_range": {
+            "values": [[0,0.025,0.05,0.1,0.2,0.3]]
         },
         "model_type": {
-            "values": ["HINet"]
+            "values": ["HINet","NetEst","TargetedModel_DoubleBSpline","GINModel","TARNet","GCN_DECONF","SPNet"]
         },
 }}
 
-wandb_project_name = "" #put your wandb project name here
+wandb_project_name = "your_project_name" #put your wandb project name here
 def sweep_function():
     wandb.init(config=hyperparameter_defaults,
                project = wandb_project_name,
@@ -192,6 +212,8 @@ def sweep_function():
         model = GCN_DECONF(Xshape=config["covariate_dim"],hidden=config["hidden"])
     elif config["model_type"] == "SPNet":
         model = SPNet(Xshape=config["covariate_dim"],hidden=config["hidden"])
+    elif config["model_type"] == "TargetedModel_DoubleBSpline":
+        model = TargetedModel_DoubleBSpline(Xshape=config["covariate_dim"],hidden=config["hidden"],tr_knots=config["tr_knots"])
     trainer = Trainer(config=config,model=model,train_data=train_data,val_data=val_data,test_data=test_data,device=True)
 
     trainer.train_test_best_model(epochs_range=config["epochs_range"],hidden_range=config["hidden_range"],alpha_range=config["alpha_range"],lr_range=config["lr_range"],num_seeds=config["num_seeds"])
