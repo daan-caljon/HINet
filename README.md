@@ -34,6 +34,8 @@ Put the data in the ```data/semi_synthetic/``` folder. For the Homophily and BA 
 Now, the results from the paper can be reproduced by selecting the right parameters in the ```wandb``` sweep configuration.
 
 ## Acknowledgements
-Our code builds upon the code from [Jiang & Sun (2022)](https://github.com/songjiang0909/Causal-Inference-on-Networked-Data). 
+Our code builds upon the code from [Jiang & Sun (2022)](https://github.com/songjiang0909/Causal-Inference-on-Networked-Data) and [Chen et al. (2024)](https://github.com/WeilinChen507/targeted_interference). 
 
 Jiang, S. & Sun, Y. (2022). Estimating causal effects on networked observational data via representation learning. In Proceedings of the 31st ACM International Conference on Information & Knowledge Management, (pp. 852–861).
+
+Chen, W., Cai, R., Yang, Z., Qiao, J., Yan, Y., Li, Z. & Hao, Z.. (2024). Doubly Robust Causal Effect Estimation under Networked Interference via Targeted Learning. Proceedings of the 41st International Conference on Machine Learning, in Proceedings of Machine Learning Research 235:6457-6485
