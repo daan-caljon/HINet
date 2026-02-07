@@ -1,5 +1,5 @@
 # HINet: Heterogeneous Interference Network
-This repository provides the code for the paper *"Estimating treatment effects in networks using domain adversarial learning"*.
+This repository provides the code for the paper *"Estimating treatment effects in networks by learning exposure mappings"*.
 
 The structure of the code is as follows:
 ```
