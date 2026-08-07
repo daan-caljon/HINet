@@ -1,0 +1,130 @@
+# HINet Experiment Configuration
+# ================================
+# This file contains all parameters for running experiments.
+# Override any parameter via CLI: python scripts/run.py --config config/default.yaml model.type=NetEst data.dataset=BC
+
+experiment:
+  wandb_project: "HINet"
+  num_seeds: 5                  # Paper reports mean +/- SD over 5 initializations
+  seed: 2000
+
+data:
+  dataset: "full_sim"           # BC, Flickr, CS, full_sim
+  num_nodes: 10000              # Only used for full_sim (paper: 10,000)
+  covariate_dim: 10
+  homophily: false              # Only used for full_sim (true = Homophily Sim, false = BA Sim)
+  node2vec: false
+  compute_assortativity: false  # Expensive NetworkX diagnostics; keep off for large graphs
+  edges_new_node: 2             # m parameter for BA network
+  exposure_type: "weight"       # average, sum, weight, weight_squared, entropy
+  percent_treated: 0.25
+  flip_rate: 0.5
+  # Data generating process parameters
+  beta_confounding: 6           # X -> T
+  beta_neighbor_confounding: 0  # X_N -> T
+  beta_treat_to_outcome: 2      # T -> Y
+  beta_neighbor_treatment_to_outcome: 2  # T_N -> Y (via exposure mapping)
+  beta_covariate_to_outcome: 1.5         # X -> Y
+  beta_neighbor_covariate_to_outcome: 1.5 # X_N -> Y
+  beta_noise: 0.2
+  beta0: 0                      # Intercept
+  bias_T2Y: 0                   # Intercept for T -> Y
+  bias_NT2Y: 0                  # Intercept for NT -> Y
+
+model:
+  type: "HINet"                 # HINet, HINet_no_net_conf, NetEst, GINNetEst, GINModel, TARNet, GCN_DECONF, SPNet, TargetedModel_DoubleBSpline, IDENet
+  hidden: 16
+  dropout: 0.0
+  gnn_layer: "GIN"              # HINet only (ignored for other model types): GIN, GAT, GCN, GraphSAGE
+
+training:
+  num_epochs: 1500
+  batch_size: -1                # -1 = full batch
+  learning_rate: 0.005
+  weight_decay: 0.001
+  alpha: 1                      # Used by TargetedModel and SPNet; for HINet/NetEst, use tuning.alpha_range
+  gamma: 1
+
+tuning:
+  epochs_range: [500,1000, 2000]
+  hidden_range: [16, 32]
+  alpha_range: [0, 0.025, 0.05, 0.1, 0.2, 0.3]
+  n_alpha_tune: 2              # Number of retrains per alpha during alpha selection
+  lr_range: [0.001, 0.0005, 0.0001]
+  dropout_range: [0,0.1, 0.2]
+  p_alpha: 0.1                  # Tolerance for alpha selection
+
+evaluation:
+  num_networks: 50              # m in CNEE and PEHNE calculation
+  track_loss: false
+
+# NetDeconf-specific parameters
+netdeconf:
+  balance_weight: 0.5           # Reference implementation's alpha_base
+
+# TargetedModel_DoubleBSpline-specific parameters
+targeted_model:
+  beta: null                    # Auto-computed as 20/sqrt(num_nodes) if null
+  num_grid: 20
+  tr_knots: 0.1
+  lr_2_step: 0.001
+  pre_train_epochs: 0
+  fluctuation_train_epochs: 50
+  loss_2step_with_ly: 0
+  loss_2step_with_ltz: 0
+
+# IDENet-specific parameters (from Adhikari & Zheleva, MLJ 2025)
+# hidden, dropout, epochs, lr, and weight_decay are tuned via the standard
+# tuning section above — those tuned values are used automatically.
+idenet:
+  exposure_type: 2            # 2 = VanillaHeterogeneousExposure, 1 = avg-neighbor z_IDENet
+  edge_dim: 1                 # auto-generated binary edge indicator (dataset has no edge features)
+  exposure_layers: 2          # MLP depth in exposure mapper
+  vanilla: false              # false = original INE/CANE feature mapper
+  feature_layers: 2           # feature mapping depth (matches original default)
+  edge_hidden: 4              # edge hidden size for CANE feature mapper
+  precompute_train_z: true    # only applies to exposure_type=1 and full-batch training
+  smooth_lambda: 0.1          # variance smoothing weight (original l1_lambda term)
+  smooth_start_epoch: 150     # start smoothing after warm-up
+  early_stop_patience: 300    # patience for original-style early stopping
+  early_stop_warmup: 50       # only update best after this epoch
+  early_stop_min_epoch: 150   # do not early-stop before this epoch
+  lr_est_multiplier: 10.0       # T-learner LR = tuned_lr * multiplier (paper: 0.2/0.02 = 10x)
+  lr_step_size: 50              # Step LR scheduler: decay every N epochs
+  lr_step_gamma: 0.5            # Step LR scheduler: multiply LR by this
+  grad_clip: 3.0                # Gradient clipping norm (0 = disabled)
+
+# W&B sweep configuration, used by `python scripts/run.py --sweep`.
+#
+# IMPORTANT: sweep parameter names must be given as DOTTED paths into the nested
+# config above (e.g. `data.dataset`, not `dataset`). Undotted names are recorded
+# by W&B but are NOT applied to the config, so the run would silently use the
+# YAML default instead of the swept value.
+#
+# Note that sweep values take precedence over command-line overrides, so a
+# parameter listed here cannot be overridden with `run.py --sweep key=value`;
+# change it in this file instead.
+#
+# The grid below covers 32 of the 40 cells of the main results table: 8 methods x
+# 4 datasets (BA Sim, BC, Flickr, Coauthor-CS) under the default feature-weighted
+# mean exposure mapping. `data.homophily` only affects `full_sim` and is inert for
+# the three real-network datasets, so it is fixed here to avoid duplicate runs.
+# For the remaining 8 cells (Homophily Sim), set `data.dataset` to ["full_sim"]
+# and `data.homophily` to [true] below, then sweep again. See the README for the
+# settings of the remaining tables and figures.
+sweep:
+  method: "grid"
+  parameters:
+    model.type:
+      values: ["HINet", "TARNet", "GCN_DECONF", "NetEst",
+               "TargetedModel_DoubleBSpline", "GINModel", "SPNet", "IDENet"]
+    data.dataset:
+      values: ["full_sim", "BC", "Flickr", "CS"]
+    data.homophily:
+      values: [false]
+    data.num_nodes:
+      values: [10000]
+    data.exposure_type:
+      values: ["weight"]
+    data.beta_confounding:
+      values: [6]

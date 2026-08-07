@@ -1,11 +1,12 @@
 import numpy as np
 import scipy.io as sio
+import scipy.sparse as sp
 import pickle as pkl
 from sklearn.decomposition import LatentDirichletAllocation
 
 """
     This is code from Song Jiang: https://github.com/songjiang0909/Causal-Inference-on-Networked-Data
-    This code was ued in "Estimating causal effects on networked observational data":
+    This code was used in "Estimating causal effects on networked observational data":
     @inproceedings{netest2022,
     title={Estimating Causal Effects on Networked Observational Data via Representation Learning},
     author={Song Jiang, Yizhou Sun},
@@ -13,53 +14,56 @@ from sklearn.decomposition import LatentDirichletAllocation
     year={2022}
     }
     MIT License
-
     Copyright (c) 2022 Song Jiang
 
-    Permission is hereby granted, free of charge, to any person obtaining a copy
-    of this software and associated documentation files (the "Software"), to deal
-    in the Software without restriction, including without limitation the rights
-    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-    copies of the Software, and to permit persons to whom the Software is
-    furnished to do so, subject to the following conditions:
+    The Coauthor-CS loader (_load_cs_npz and the "CS" branches in readData and
+    adjMatrixSplit) is an addition for this paper and is NOT part of the code
+    above. The CS dataset comes from the gnn-benchmark repository of Shchur et
+    al. (2019), MIT license.
+"""
 
-    The above copyright notice and this permission notice shall be included in all
-    copies or substantial portions of the Software.
 
-    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-    SOFTWARE.
+def _load_cs_npz(path=r"data/semi_synthetic/CS/ms_academic_cs.npz"):
+    """Coauthor-CS: the MS Academic co-authorship graph of Shchur et al. (2019).
+
+    The npz file is downloaded verbatim from the gnn-benchmark repository
+    (MIT license): https://github.com/shchur/gnn-benchmark/raw/master/data/npz/ms_academic_cs.npz
+    Returns a dict with the same interface as the BC/Flickr .mat files
+    ("Network", "Attributes"). The npz stores a directed adjacency; it is
+    symmetrised, binarised, and stripped of self-loops here so every consumer of
+    readData sees the same undirected graph.
+
+    Reference: Shchur, Mumme, Bojchevski, Guennemann. Pitfalls of Graph Neural
+    Network Evaluation. arXiv:1811.05868, 2019.
     """
+    with np.load(path, allow_pickle=True) as f:
+        adj = sp.csr_matrix(
+            (f["adj_data"], f["adj_indices"], f["adj_indptr"]), shape=f["adj_shape"]
+        )
+        attr = sp.csr_matrix(
+            (f["attr_data"], f["attr_indices"], f["attr_indptr"]), shape=f["attr_shape"]
+        )
+    adj = adj + adj.T
+    adj.data[:] = 1.0
+    adj.setdiag(0)
+    adj.eliminate_zeros()
+    return {"Network": adj, "Attributes": attr}
+
 
 def readData(dataset):
     if dataset == "BC":
         data = sio.loadmat(r"data/semi_synthetic/BC/BC0.mat")
-        with open(r'data/semi_synthetic/BC/BC_parts.pkl','rb') as f:
+        with open(r'data/semi_synthetic/BC/BC_parts.pkl', 'rb') as f:
             parts = pkl.load(f)
-    
     if dataset == "Flickr":
-        print ("Flickr")
         data = sio.loadmat(r"data/semi_synthetic/Flickr/Flickr01.mat")
-        with open(r'data/semi_synthetic/Flickr/Flickr_parts.pkl','rb') as f:
+        with open(r'data/semi_synthetic/Flickr/Flickr_parts.pkl', 'rb') as f:
             parts = pkl.load(f)
-            
-    return data,parts
-
-
-def saveData(dataset,data,expID,flipRate):
-    if dataset == "BC":
-        file = "../BC/simulation/"+str(dataset)+"_fliprate_"+str(flipRate)+"_expID_"+str(expID)+".pkl"
-    if dataset == "Flickr":
-        print ("Flickr Flickr Save")
-        file = "../Flickr/simulation/"+str(dataset)+"_fliprate_"+str(flipRate)+"_expID_"+str(expID)+".pkl"
-        
-    with open(file,'wb') as f:
-        pkl.dump(data,f)
-
+    if dataset == "CS":
+        data = _load_cs_npz()
+        with open(r'data/semi_synthetic/CS/CS_parts.pkl', 'rb') as f:
+            parts = pkl.load(f)
+    return data, parts
 
 
 def dataSplit(parts):
@@ -67,100 +71,49 @@ def dataSplit(parts):
     valIndex = []
     testIndex = []
     for i in range(len(parts["parts"])):
-        if parts["parts"][i]==0:
+        if parts["parts"][i] == 0:
             trainIndex.append(i)
-        elif parts["parts"][i]==1:
+        elif parts["parts"][i] == 1:
             valIndex.append(i)
         else:
             testIndex.append(i)
-    print ("Size of train graph:{}, val graph:{}, test graph:{}".format(len(trainIndex),len(valIndex),len(testIndex)))
-    return trainIndex,valIndex,testIndex
+    print("Size of train graph:{}, val graph:{}, test graph:{}".format(
+        len(trainIndex), len(valIndex), len(testIndex)))
+    return trainIndex, valIndex, testIndex
 
 
-def covariateTransform(data,dimension,trainIndex,valIndex,testIndex):
-
+def covariateTransform(data, dimension, trainIndex, valIndex, testIndex, random_state=None):
     X = data["Attributes"]
     print("features shape:{}".format(X.shape))
-    lda = LatentDirichletAllocation(n_components=dimension)
+    lda = LatentDirichletAllocation(n_components=dimension, random_state=random_state)
     lda.fit(X)
     X = lda.transform(X)
     trainX = X[trainIndex]
     valX = X[valIndex]
     testX = X[testIndex]
-    print ("Shape of graph covariate train:{}, val:{}, test:{}".format(trainX.shape,valX.shape,testX.shape))
+    print("Shape of graph covariate train:{}, val:{}, test:{}".format(
+        trainX.shape, valX.shape, testX.shape))
+    return trainX, valX, testX
 
-    return trainX,valX,testX
 
-
-def adjMatrixSplit(data,trainIndex,valIndex,testIndex,dataset):
+def adjMatrixSplit(data, trainIndex, valIndex, testIndex, dataset):
+    if dataset == "CS":
+        # 18k x 18k dense would be ~2.7 GB; csr fancy indexing keeps the splits
+        # sparse, which is what the full_sim path feeds downstream anyway.
+        A = sp.csr_matrix(data["Network"])
+        trainA = A[trainIndex][:, trainIndex]
+        valA = A[valIndex][:, valIndex]
+        testA = A[testIndex][:, testIndex]
+        print("Shape of adj matrix train:{}, val:{}, test:{}".format(
+            trainA.shape, valA.shape, testA.shape))
+        return trainA, valA, testA
     if dataset == "Flickr":
         A = data["Network"]
     else:
         A = data["Network"].toarray()
-
     trainA = np.array([a[trainIndex] for a in A[trainIndex]])
     valA = np.array([a[valIndex] for a in A[valIndex]])
     testA = np.array([a[testIndex] for a in A[testIndex]])
-    print ("Shape of adj matrix train:{}, val:{}, test:{}".format(trainA.shape,valA.shape,testA.shape))
-    print("Number of edges in train graph:{}, val graph:{}, test graph:{}".format(np.sum(trainA)/2,np.sum(valA)/2,np.sum(testA)/2))
-
-    return trainA,valA,testA
-
-
-def sigmod(x):
-    return 1/(1 + np.exp(-x))
-
-
-def treatmentSimulation(w_c,X,A,betaConfounding,betaNeighborConfounding):
-
-    covariate2TreatmentMechanism = sigmod(np.matmul(w_c,X.T))
-    neighbors = np.sum(A,1)
-    print (np.sum(neighbors==0))
-    neighborAverage = np.divide(np.matmul(A, covariate2TreatmentMechanism.reshape(-1)), neighbors)
-    print (np.mean(betaConfounding*covariate2TreatmentMechanism+betaNeighborConfounding*neighborAverage),np.std(betaConfounding*covariate2TreatmentMechanism+betaNeighborConfounding*neighborAverage))
-    propensityT= sigmod(betaConfounding*covariate2TreatmentMechanism+betaNeighborConfounding*neighborAverage)
-    meanT = np.mean(propensityT)
-    T = np.array([1 if x>meanT else 0 for x in propensityT])
-    print ("Lenght of treatment vector:{}".format(len(T)))
-
-    return T,meanT
-
-
-def noiseSimulation(data,trainIndex,valIndex,testIndex):
-
-    X = data["Attributes"]
-    epsilon = np.random.normal(0,1,X.shape[0])
-    epsilonTrain = epsilon[trainIndex]
-    epsilonVal = epsilon[valIndex]
-    epsilonTest = epsilon[testIndex]
-
-    return epsilonTrain,epsilonVal,epsilonTest
-
-
-def potentialOutcomeSimulation(w,X,A,T,epsilon,betaTreat2Outcome,betaCovariate2Outcome,betaNeighborCovariate2Outcome,betaNeighborTreatment2Outcome, betaNoise,Z=None):
-
-    covariate2OutcomeMechanism = sigmod(np.matmul(w,X.T))
-    neighbors = np.sum(A,1)
-    neighborAverage = np.divide(np.matmul(A, covariate2OutcomeMechanism.reshape(-1)), neighbors)
-
-    if Z is None:
-        print ("generate Z")
-        neighborAverageT = np.divide(np.matmul(A, T.reshape(-1)), neighbors)
-    else:
-        print ("use Z")
-        neighborAverageT = Z
-    potentialOutcome = betaTreat2Outcome*T + betaCovariate2Outcome*covariate2OutcomeMechanism + betaNeighborCovariate2Outcome*neighborAverage+betaNeighborTreatment2Outcome*neighborAverageT+betaNoise*epsilon
-    print ("Lenght of potentialOutcome vector:{}".format(len(potentialOutcome)))
-
-    return potentialOutcome
-
-
-def flipTreatment(T,rate):
-    
-    numToFlip = int(len(T)*rate)
-    nodesToFlip = set(np.random.choice(len(T), numToFlip, replace=False))
-    cfT = np.array([1-T[i] if i in nodesToFlip else T[i] for i in range(len(T))])
-    
-    return cfT,nodesToFlip
-    
-
+    print("Shape of adj matrix train:{}, val:{}, test:{}".format(
+        trainA.shape, valA.shape, testA.shape))
+    return trainA, valA, testA

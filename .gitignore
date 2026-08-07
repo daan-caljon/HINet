@@ -1,11 +1,23 @@
-figures/*
-data/*
-wandb/*
-Results/*
-Scripts/*
-!Scripts/main_sweep.py
+# Python
 __pycache__/
 *.py[cod]
-*.pdf
-*.bat
-*.png
+*.so
+.ipynb_checkpoints/
+
+# Data generated at runtime
+data/simulated/
+
+# Datasets are not redistributed here (see README) -- but keep our METIS partition
+data/semi_synthetic/BC/
+data/semi_synthetic/Flickr/
+data/semi_synthetic/CS/*
+!data/semi_synthetic/CS/CS_parts.pkl
+
+# Experiment tracking
+wandb/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
